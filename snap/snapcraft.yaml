@@ -1,9 +1,11 @@
 name: epi-mqtt
 version: V02.00-RC1
-summary: EpiSensor Eclipse Mosquitto MQTT broker
+summary: EpiSensor MQTT broker for EpiSensor Edge gateways
 description: |
-  EpiSensor MQTT broker based on Eclipse Mosquitto 2.1.2.
-  Supports MQTT v5.0, v3.1.1, and v3.1.
+  Provides MQTT messaging for EpiSensor Edge gateways. Based on
+  Eclipse Mosquitto, enabling inter-snap communication and local
+  MQTT connectivity for industrial IoT data transport.
+icon: snap/gui/episensor.png
 confinement: strict
 grade: stable
 base: core24
