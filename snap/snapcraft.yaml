@@ -1,5 +1,5 @@
 name: epi-mqtt
-version: V02.00-RC1
+version: V02.00-RC2
 summary: EpiSensor MQTT broker for EpiSensor Edge gateways
 description: |
   Provides MQTT messaging for EpiSensor Edge gateways. Based on
