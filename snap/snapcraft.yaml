@@ -1,5 +1,5 @@
 name: epi-mqtt
-version: V02.00-RC2
+version: V02.00-RC3
 summary: EpiSensor MQTT broker for EpiSensor Edge gateways
 description: |
   Provides MQTT messaging for EpiSensor Edge gateways. Based on
@@ -38,10 +38,16 @@ apps:
   pub:
     command: usr/bin/mosquitto_pub
     plugs: [home, network]
+  mosquitto-pub:
+    command: usr/bin/mosquitto_pub
+    plugs: [home, network]
   rr:
     command: usr/bin/mosquitto_rr
     plugs: [home, network]
   sub:
+    command: usr/bin/mosquitto_sub
+    plugs: [home, network]
+  mosquitto-sub:
     command: usr/bin/mosquitto_sub
     plugs: [home, network]
   passwd:

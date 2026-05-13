@@ -1,6 +1,25 @@
 Eclipse Mosquitto
 =================
 
+## EpiSensor Snap Diagnostics
+
+The `epi-mqtt` snap exposes Mosquitto client tools as snap apps. Use these
+instead of running binaries directly from `/snap/epi-mqtt/current`, because
+`snap run` sets the library paths and confinement environment correctly.
+
+Subscribe to a local topic:
+
+    snap run epi-mqtt.mosquitto-sub -h localhost -p 1883 -t '#' -v
+
+Publish a local test message:
+
+    snap run epi-mqtt.mosquitto-pub -h localhost -p 1883 -t test/topic -m hello
+
+Short aliases are also available:
+
+    snap run epi-mqtt.sub -h localhost -p 1883 -t '#' -v
+    snap run epi-mqtt.pub -h localhost -p 1883 -t test/topic -m hello
+
 Mosquitto is an open source implementation of a server for version 5.0, 3.1.1,
 and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and
 the `mosquitto_pub` and `mosquitto_sub` utilities for publishing and
