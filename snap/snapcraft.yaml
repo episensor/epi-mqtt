@@ -79,12 +79,14 @@ parts:
     source-type: git
     source-tag: v2.1.2
     build-packages:
+      - cmake
       - docbook-xsl
       - g++
       - gcc
       - libcjson-dev
       - libedit-dev
       - libssl-dev
+      - make
       - xsltproc
     stage-packages:
       - ca-certificates
