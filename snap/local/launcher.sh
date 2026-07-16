@@ -10,9 +10,10 @@ case "$SNAP_USER_COMMON" in
 esac
 
 CONFIG_FILE="$SNAP/default_config.conf"
-CUSTOM_CONFIG="$COMMON/mosquitto.conf"
+CONTENT_CONFIG="$SNAP_DATA/config/mosquitto.conf"
+LEGACY_CONFIG="$COMMON/mosquitto.conf"
 
-echo "Searching for custom config mosquitto.conf in $COMMON"
+echo "Searching for custom Mosquitto configuration"
 
 # Ensure config and certs directories exist for content interface
 mkdir -p "$SNAP_DATA/config"
@@ -24,10 +25,14 @@ if [ ! -e "$COMMON/mosquitto_example.conf" ]; then
   cp "$SNAP/mosquitto.conf" "$COMMON/mosquitto_example.conf"
 fi
 
-# Use custom config if it exists
-if [ -e "$CUSTOM_CONFIG" ]; then
-  echo "Found config in $CUSTOM_CONFIG"
-  CONFIG_FILE="$CUSTOM_CONFIG"
+# Preserve the legacy administrator override, then use the configuration
+# shared through the mqtt-config content interface.
+if [ -e "$LEGACY_CONFIG" ]; then
+  echo "Found legacy config in $LEGACY_CONFIG"
+  CONFIG_FILE="$LEGACY_CONFIG"
+elif [ -e "$CONTENT_CONFIG" ]; then
+  echo "Found content-interface config in $CONTENT_CONFIG"
+  CONFIG_FILE="$CONTENT_CONFIG"
 else
   echo "Using default config from $CONFIG_FILE"
 fi
