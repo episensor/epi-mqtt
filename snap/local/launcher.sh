@@ -1,6 +1,7 @@
 #!/bin/sh
 # EpiSensor MQTT broker launcher
-# Checks for custom config in $SNAP_COMMON (daemon) or $SNAP_USER_COMMON (user)
+# Uses one canonical durable config in $SNAP_COMMON. The old content-interface
+# file is an import source only and never remains a competing authority.
 
 echo "Running epi-mqtt launcher script..."
 
@@ -11,7 +12,8 @@ esac
 
 CONFIG_FILE="$SNAP/default_config.conf"
 CONTENT_CONFIG="$SNAP_DATA/config/mosquitto.conf"
-LEGACY_CONFIG="$COMMON/mosquitto.conf"
+CANONICAL_CONFIG="$COMMON/mosquitto.conf"
+MIGRATION_MARKER="$COMMON/.config-authority-v1"
 
 echo "Searching for custom Mosquitto configuration"
 
@@ -25,16 +27,31 @@ if [ ! -e "$COMMON/mosquitto_example.conf" ]; then
   cp "$SNAP/mosquitto.conf" "$COMMON/mosquitto_example.conf"
 fi
 
-# Preserve the legacy administrator override, then use the configuration
-# shared through the mqtt-config content interface.
-if [ -e "$LEGACY_CONFIG" ]; then
-  echo "Found legacy config in $LEGACY_CONFIG"
-  CONFIG_FILE="$LEGACY_CONFIG"
-elif [ -e "$CONTENT_CONFIG" ]; then
-  echo "Found content-interface config in $CONTENT_CONFIG"
-  CONFIG_FILE="$CONTENT_CONFIG"
-else
-  echo "Using default config from $CONFIG_FILE"
+# Establish one durable authority. Preserve an existing administrator/Core
+# config byte-for-byte. Otherwise import the content-interface config once, or
+# seed the packaged local-only default. Later content-file changes are ignored.
+if [ ! -e "$CANONICAL_CONFIG" ]; then
+  IMPORT_SOURCE="$SNAP/default_config.conf"
+  IMPORT_KIND="packaged-default"
+  if [ -f "$CONTENT_CONFIG" ] && [ ! -L "$CONTENT_CONFIG" ]; then
+    IMPORT_SOURCE="$CONTENT_CONFIG"
+    IMPORT_KIND="content-interface"
+  fi
+  TEMP_CONFIG=$(mktemp "$COMMON/.mosquitto.conf.XXXXXX")
+  trap 'rm -f "$TEMP_CONFIG"' EXIT HUP INT TERM
+  cp "$IMPORT_SOURCE" "$TEMP_CONFIG"
+  chmod 600 "$TEMP_CONFIG"
+  mv -f "$TEMP_CONFIG" "$CANONICAL_CONFIG"
+  trap - EXIT HUP INT TERM
+  printf 'schema_version=1\nauthority=%s\nimported_from=%s\n' \
+    "$CANONICAL_CONFIG" "$IMPORT_KIND" > "$MIGRATION_MARKER"
 fi
 
+if [ -L "$CANONICAL_CONFIG" ] || [ ! -f "$CANONICAL_CONFIG" ]; then
+  echo "Refusing invalid canonical Mosquitto config: $CANONICAL_CONFIG" >&2
+  exit 1
+fi
+
+CONFIG_FILE="$CANONICAL_CONFIG"
+echo "Using canonical config from $CONFIG_FILE"
 exec "$SNAP/usr/sbin/mosquitto" -c "$CONFIG_FILE" "$@"

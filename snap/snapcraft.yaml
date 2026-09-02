@@ -1,5 +1,5 @@
 name: epi-mqtt
-version: V02.00-RC4
+version: V02.00-RC5
 summary: EpiSensor MQTT broker for EpiSensor Edge gateways
 description: |
   Provides MQTT messaging for EpiSensor Edge gateways. Based on
@@ -53,6 +53,8 @@ apps:
   passwd:
     command: usr/bin/mosquitto_passwd
     plugs: [home]
+  configure:
+    command: configure-broker.sh
 
 parts:
   script:
@@ -61,6 +63,7 @@ parts:
     prime:
       - default_config.conf
       - launcher.sh
+      - configure-broker.sh
   config:
     plugin: dump
     source: .

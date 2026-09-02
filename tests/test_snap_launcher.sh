@@ -27,16 +27,34 @@ run_launcher() {
 }
 
 default_args=$(run_launcher)
-test "$default_args" = "-c $SNAP/default_config.conf"
+test "$default_args" = "-c $SNAP_COMMON/mosquitto.conf"
+cmp "$SNAP_COMMON/mosquitto.conf" "$SNAP/default_config.conf"
+grep -q '^imported_from=packaged-default$' "$SNAP_COMMON/.config-authority-v1"
 
+# A content-interface file arriving later cannot silently replace the active
+# canonical configuration.
 mkdir -p "$SNAP_DATA/config"
 printf '%s\n' 'listener 1884 127.0.0.1' > "$SNAP_DATA/config/mosquitto.conf"
 content_args=$(run_launcher)
-test "$content_args" = "-c $SNAP_DATA/config/mosquitto.conf"
+test "$content_args" = "-c $SNAP_COMMON/mosquitto.conf"
+cmp "$SNAP_COMMON/mosquitto.conf" "$SNAP/default_config.conf"
 
+# Existing administrator/Core configuration remains authoritative.
 printf '%s\n' 'listener 1885 127.0.0.1' > "$SNAP_COMMON/mosquitto.conf"
 legacy_args=$(run_launcher)
 test "$legacy_args" = "-c $SNAP_COMMON/mosquitto.conf"
+
+# On an upgrade with no common config, the content file is imported exactly
+# once and survives subsequent content changes.
+rm -f "$SNAP_COMMON/mosquitto.conf" "$SNAP_COMMON/.config-authority-v1"
+printf '%s\n' 'listener 1886 127.0.0.1' > "$SNAP_DATA/config/mosquitto.conf"
+import_args=$(run_launcher)
+test "$import_args" = "-c $SNAP_COMMON/mosquitto.conf"
+grep -q '^listener 1886 127.0.0.1$' "$SNAP_COMMON/mosquitto.conf"
+grep -q '^imported_from=content-interface$' "$SNAP_COMMON/.config-authority-v1"
+printf '%s\n' 'listener 1887 127.0.0.1' > "$SNAP_DATA/config/mosquitto.conf"
+run_launcher >/dev/null
+grep -q '^listener 1886 127.0.0.1$' "$SNAP_COMMON/mosquitto.conf"
 
 test -f "$SNAP_COMMON/mosquitto_example.conf"
 echo "snap launcher tests passed"
