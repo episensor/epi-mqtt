@@ -17,15 +17,27 @@ ACL_FILE="$CONFIG_DIR/aclfile"
 STATE_FILE="$COMMON/broker-config.state"
 CERT_DIR="$COMMON/certs"
 SHARED_CERT_DIR="$DATA/certs"
+PENDING_CERT="$SHARED_CERT_DIR/server-fullchain.pem.pending"
+PENDING_KEY="$SHARED_CERT_DIR/server-privkey.pem.pending"
 LOCK_DIR="$COMMON/.configure-broker.lock"
 SNAPCTL_BIN="${EPI_MQTT_SNAPCTL_BIN:-snapctl}"
 VERIFY_ATTEMPTS="${EPI_MQTT_VERIFY_ATTEMPTS:-20}"
-VERIFY_INTERVAL="${EPI_MQTT_VERIFY_INTERVAL:-0.25}"
+VERIFY_INTERVAL="${EPI_MQTT_VERIFY_INTERVAL:-1}"
 NEXT=""
 PREVIOUS=""
 NEXT_ACL=""
 PREVIOUS_ACL=""
 STATE_NEXT=""
+NEXT_CERT=""
+NEXT_KEY=""
+PREVIOUS_CERT=""
+PREVIOUS_KEY=""
+HAD_PREVIOUS=false
+HAD_PREVIOUS_ACL=false
+HAD_PREVIOUS_CERT=false
+HAD_PREVIOUS_KEY=false
+USE_STAGED_CERTS=false
+ROLLBACK_REQUIRED=false
 
 usage() {
   echo "usage: epi-mqtt.configure --mode local|core-mtls|core-password [--local-port PORT] [--gateway-port PORT] [--username USER]" >&2
@@ -51,7 +63,13 @@ release_lock() {
 }
 
 cleanup() {
-  for temporary in "$NEXT" "$PREVIOUS" "$NEXT_ACL" "$PREVIOUS_ACL" "$STATE_NEXT"; do
+  if [ "$ROLLBACK_REQUIRED" = true ]; then
+    restore_previous >/dev/null 2>&1 || true
+    restart_and_verify >/dev/null 2>&1 || true
+  fi
+  for temporary in \
+    "$NEXT" "$PREVIOUS" "$NEXT_ACL" "$PREVIOUS_ACL" "$STATE_NEXT" \
+    "$NEXT_CERT" "$NEXT_KEY" "$PREVIOUS_CERT" "$PREVIOUS_KEY"; do
     [ -n "$temporary" ] && rm -f "$temporary" 2>/dev/null || true
   done
   release_lock
@@ -89,6 +107,20 @@ restore_previous() {
     cp "$PREVIOUS_ACL" "$acl_restore" && chmod 600 "$acl_restore" && mv -f "$acl_restore" "$ACL_FILE"
   else
     rm -f "$ACL_FILE"
+  fi
+  if [ "$HAD_PREVIOUS_CERT" = true ]; then
+    cert_restore=$(mktemp "$CERT_DIR/.server-fullchain.restore.XXXXXX") || return 1
+    cp "$PREVIOUS_CERT" "$cert_restore" && chmod 644 "$cert_restore" \
+      && mv -f "$cert_restore" "$CERT_DIR/server-fullchain.pem"
+  else
+    rm -f "$CERT_DIR/server-fullchain.pem"
+  fi
+  if [ "$HAD_PREVIOUS_KEY" = true ]; then
+    key_restore=$(mktemp "$CERT_DIR/.server-privkey.restore.XXXXXX") || return 1
+    cp "$PREVIOUS_KEY" "$key_restore" && chmod 600 "$key_restore" \
+      && mv -f "$key_restore" "$CERT_DIR/server-privkey.pem"
+  else
+    rm -f "$CERT_DIR/server-privkey.pem"
   fi
 }
 
@@ -149,18 +181,31 @@ mkdir -p "$CONFIG_DIR" "$CERT_DIR" "$SHARED_CERT_DIR"
 [ ! -L "$COMMON" ] && [ ! -L "$CANONICAL_CONFIG" ] \
   || { json_error unsafe_config_path "Canonical configuration path is a symlink"; exit 66; }
 
+if [ "$MODE" != local ]; then
+  if [ -e "$PENDING_CERT" ] || [ -L "$PENDING_CERT" ] \
+    || [ -e "$PENDING_KEY" ] || [ -L "$PENDING_KEY" ]; then
+    [ -f "$PENDING_CERT" ] && [ ! -L "$PENDING_CERT" ] \
+      && [ -f "$PENDING_KEY" ] && [ ! -L "$PENDING_KEY" ] \
+      || { json_error incomplete_certificate_stage "Both staged server certificate files are required and must be regular files"; exit 66; }
+    USE_STAGED_CERTS=true
+  else
+    for required in \
+      "$CERT_DIR/server-fullchain.pem" \
+      "$CERT_DIR/server-privkey.pem"; do
+      [ -f "$required" ] && [ ! -L "$required" ] \
+        || { json_error missing_dependency "Required server certificate file is missing or unsafe"; exit 66; }
+    done
+  fi
+fi
+
 if [ "$MODE" = core-mtls ]; then
   for required in \
-    "$CERT_DIR/server-fullchain.pem" \
-    "$CERT_DIR/server-privkey.pem" \
     "$SHARED_CERT_DIR/gateway-client-ca.crt"; do
     [ -f "$required" ] && [ ! -L "$required" ] \
       || { json_error missing_dependency "Required mTLS file is missing or unsafe"; exit 66; }
   done
 elif [ "$MODE" = core-password ]; then
   for required in \
-    "$CERT_DIR/server-fullchain.pem" \
-    "$CERT_DIR/server-privkey.pem" \
     "$CONFIG_DIR/passwordfile"; do
     [ -f "$required" ] && [ ! -L "$required" ] \
       || { json_error missing_dependency "Required password-auth file is missing or unsafe"; exit 66; }
@@ -178,8 +223,10 @@ NEXT=$(mktemp "$COMMON/.mosquitto.next.XXXXXX")
 PREVIOUS=$(mktemp "$COMMON/.mosquitto.previous.XXXXXX")
 NEXT_ACL=$(mktemp "$CONFIG_DIR/.aclfile.next.XXXXXX")
 PREVIOUS_ACL=$(mktemp "$CONFIG_DIR/.aclfile.previous.XXXXXX")
-HAD_PREVIOUS=false
-HAD_PREVIOUS_ACL=false
+NEXT_CERT=$(mktemp "$CERT_DIR/.server-fullchain.next.XXXXXX")
+NEXT_KEY=$(mktemp "$CERT_DIR/.server-privkey.next.XXXXXX")
+PREVIOUS_CERT=$(mktemp "$CERT_DIR/.server-fullchain.previous.XXXXXX")
+PREVIOUS_KEY=$(mktemp "$CERT_DIR/.server-privkey.previous.XXXXXX")
 if [ -f "$CANONICAL_CONFIG" ]; then
   cp "$CANONICAL_CONFIG" "$PREVIOUS"
   HAD_PREVIOUS=true
@@ -187,6 +234,26 @@ fi
 if [ -f "$ACL_FILE" ]; then
   cp "$ACL_FILE" "$PREVIOUS_ACL"
   HAD_PREVIOUS_ACL=true
+fi
+if [ -f "$CERT_DIR/server-fullchain.pem" ]; then
+  cp "$CERT_DIR/server-fullchain.pem" "$PREVIOUS_CERT"
+  HAD_PREVIOUS_CERT=true
+fi
+if [ -f "$CERT_DIR/server-privkey.pem" ]; then
+  cp "$CERT_DIR/server-privkey.pem" "$PREVIOUS_KEY"
+  HAD_PREVIOUS_KEY=true
+fi
+ROLLBACK_REQUIRED=true
+
+if [ "$USE_STAGED_CERTS" = true ]; then
+  cp "$PENDING_CERT" "$NEXT_CERT"
+  cp "$PENDING_KEY" "$NEXT_KEY"
+  chmod 644 "$NEXT_CERT"
+  chmod 600 "$NEXT_KEY"
+  mv -f "$NEXT_CERT" "$CERT_DIR/server-fullchain.pem"
+  NEXT_CERT=""
+  mv -f "$NEXT_KEY" "$CERT_DIR/server-privkey.pem"
+  NEXT_KEY=""
 fi
 
 cat > "$NEXT" <<EOF
@@ -253,9 +320,12 @@ NEXT=""
 if ! restart_and_verify; then
   restore_previous || true
   restart_and_verify || true
-  rm -f "$PREVIOUS" "$PREVIOUS_ACL"
+  ROLLBACK_REQUIRED=false
+  rm -f "$PREVIOUS" "$PREVIOUS_ACL" "$PREVIOUS_CERT" "$PREVIOUS_KEY"
   PREVIOUS=""
   PREVIOUS_ACL=""
+  PREVIOUS_CERT=""
+  PREVIOUS_KEY=""
   json_error service_verification_failed "Broker did not remain active; previous configuration was restored"
   exit 1
 fi
@@ -267,8 +337,14 @@ printf 'schema_version=1\nmode=%s\nlocal_port=%s\ngateway_port=%s\nusername=%s\n
 chmod 600 "$STATE_NEXT"
 mv -f "$STATE_NEXT" "$STATE_FILE"
 STATE_NEXT=""
-rm -f "$PREVIOUS" "$PREVIOUS_ACL"
+if [ "$USE_STAGED_CERTS" = true ]; then
+  rm -f "$PENDING_CERT" "$PENDING_KEY"
+fi
+ROLLBACK_REQUIRED=false
+rm -f "$PREVIOUS" "$PREVIOUS_ACL" "$PREVIOUS_CERT" "$PREVIOUS_KEY"
 PREVIOUS=""
 PREVIOUS_ACL=""
+PREVIOUS_CERT=""
+PREVIOUS_KEY=""
 printf '{"schema_version":1,"applied":true,"persisted":true,"restarted":true,"verified":true,"mode":"%s","local_port":%s,"gateway_port":%s,"revision":"%s"}\n' \
   "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$REVISION"

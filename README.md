@@ -38,8 +38,14 @@ and rolls back on failure:
     sudo snap run epi-mqtt.configure --mode core-password --username core-user --local-port 1883 --gateway-port 8883
 
 Certificate, CA, ACL, and password files stay in the snap-owned `common` and
-shared `current/certs` paths. Password values are never passed through snap
-configuration or written to snapd history.
+shared `current/certs` paths. Core installers and certificate-renewal hooks
+stage a pair as `current/certs/server-fullchain.pem.pending` and
+`server-privkey.pem.pending`; `epi-mqtt.configure` promotes both files inside
+the same transaction as the generated broker config. A failed service check
+restores the previous config, ACL, certificate, and key and leaves the staged
+pair available for diagnosis or retry. A successful check clears the staging
+files. Password values are never passed through snap configuration or written
+to snapd history.
 
 Mosquitto is an open source implementation of a server for version 5.0, 3.1.1,
 and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and

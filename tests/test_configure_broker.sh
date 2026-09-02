@@ -46,18 +46,35 @@ grep -q '^pattern readwrite %u/#$' "$SNAP_COMMON/config/aclfile"
 grep -q '^restart epi-mqtt.mosquitto$' "$SNAPCTL_LOG"
 
 before=$(cksum "$SNAP_COMMON/mosquitto.conf")
+cert_before=$(cksum "$SNAP_COMMON/certs/server-fullchain.pem")
+key_before=$(cksum "$SNAP_COMMON/certs/server-privkey.pem")
+printf 'unusable renewed cert\n' > "$SNAP_DATA/certs/server-fullchain.pem.pending"
+printf 'unusable renewed key\n' > "$SNAP_DATA/certs/server-privkey.pem.pending"
 printf 'fail\n' > "$SNAPCTL_STATE"
 set +e
 failure=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=0 \
-  sh "$ROOT/snap/local/configure-broker.sh" --mode local --local-port 1884 2>&1)
+  sh "$ROOT/snap/local/configure-broker.sh" --mode core-mtls --local-port 1884 --gateway-port 8883 2>&1)
 status=$?
 set -e
 test "$status" -ne 0
 printf '%s\n' "$failure" | grep -q '"code":"service_verification_failed"'
 test "$(cksum "$SNAP_COMMON/mosquitto.conf")" = "$before"
+test "$(cksum "$SNAP_COMMON/certs/server-fullchain.pem")" = "$cert_before"
+test "$(cksum "$SNAP_COMMON/certs/server-privkey.pem")" = "$key_before"
+test -f "$SNAP_DATA/certs/server-fullchain.pem.pending"
+test -f "$SNAP_DATA/certs/server-privkey.pem.pending"
 
 printf 'password hash\n' > "$SNAP_COMMON/config/passwordfile"
 rm -f "$SNAPCTL_STATE"
+# A successful retry promotes both staged files and clears the handoff area.
+retry_result=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=0 \
+  sh "$ROOT/snap/local/configure-broker.sh" --mode core-mtls --local-port 1883 --gateway-port 8883)
+printf '%s\n' "$retry_result" | grep -q '"verified":true'
+grep -q '^unusable renewed cert$' "$SNAP_COMMON/certs/server-fullchain.pem"
+grep -q '^unusable renewed key$' "$SNAP_COMMON/certs/server-privkey.pem"
+test ! -e "$SNAP_DATA/certs/server-fullchain.pem.pending"
+test ! -e "$SNAP_DATA/certs/server-privkey.pem.pending"
+
 password_result=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=0 \
   sh "$ROOT/snap/local/configure-broker.sh" --mode core-password --username core-user)
 printf '%s\n' "$password_result" | grep -q '"mode":"core-password"'
@@ -71,6 +88,16 @@ status=$?
 set -e
 test "$status" -ne 0
 printf '%s\n' "$invalid" | grep -q '"code":"duplicate_listener_port"'
+
+printf 'partial renewal\n' > "$SNAP_DATA/certs/server-fullchain.pem.pending"
+set +e
+incomplete=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" sh "$ROOT/snap/local/configure-broker.sh" \
+  --mode core-mtls 2>&1)
+status=$?
+set -e
+test "$status" -ne 0
+printf '%s\n' "$incomplete" | grep -q '"code":"incomplete_certificate_stage"'
+rm -f "$SNAP_DATA/certs/server-fullchain.pem.pending"
 
 # A process killed between acquiring and releasing the lock must not block all
 # future broker changes. Only a lock owned by a live PID remains authoritative.
