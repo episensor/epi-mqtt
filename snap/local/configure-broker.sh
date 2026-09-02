@@ -21,6 +21,11 @@ LOCK_DIR="$COMMON/.configure-broker.lock"
 SNAPCTL_BIN="${EPI_MQTT_SNAPCTL_BIN:-snapctl}"
 VERIFY_ATTEMPTS="${EPI_MQTT_VERIFY_ATTEMPTS:-20}"
 VERIFY_INTERVAL="${EPI_MQTT_VERIFY_INTERVAL:-0.25}"
+NEXT=""
+PREVIOUS=""
+NEXT_ACL=""
+PREVIOUS_ACL=""
+STATE_NEXT=""
 
 usage() {
   echo "usage: epi-mqtt.configure --mode local|core-mtls|core-password [--local-port PORT] [--gateway-port PORT] [--username USER]" >&2
@@ -43,6 +48,33 @@ json_error() {
 release_lock() {
   rm -f "$LOCK_DIR/owner" 2>/dev/null || true
   rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+cleanup() {
+  for temporary in "$NEXT" "$PREVIOUS" "$NEXT_ACL" "$PREVIOUS_ACL" "$STATE_NEXT"; do
+    [ -n "$temporary" ] && rm -f "$temporary" 2>/dev/null || true
+  done
+  release_lock
+}
+
+acquire_lock() {
+  mkdir "$LOCK_DIR" 2>/dev/null && return 0
+  [ ! -L "$LOCK_DIR" ] || return 1
+
+  owner=""
+  if [ -f "$LOCK_DIR/owner" ] && [ ! -L "$LOCK_DIR/owner" ]; then
+    IFS= read -r owner < "$LOCK_DIR/owner" || owner=""
+  fi
+  case "$owner" in
+    ''|*[!0-9]*) ;;
+    *) kill -0 "$owner" 2>/dev/null && return 1 ;;
+  esac
+
+  # A terminated configure process cannot release its directory. Remove only
+  # the known owner file and the now-empty lock directory; never recurse.
+  rm -f "$LOCK_DIR/owner" 2>/dev/null || return 1
+  rmdir "$LOCK_DIR" 2>/dev/null || return 1
+  mkdir "$LOCK_DIR" 2>/dev/null
 }
 
 restore_previous() {
@@ -135,12 +167,12 @@ elif [ "$MODE" = core-password ]; then
   done
 fi
 
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+if ! acquire_lock; then
   json_error configuration_busy "Another broker configuration change is in progress"
   exit 75
 fi
 printf '%s\n' "$$" > "$LOCK_DIR/owner"
-trap 'release_lock' EXIT HUP INT TERM
+trap 'cleanup' EXIT HUP INT TERM
 
 NEXT=$(mktemp "$COMMON/.mosquitto.next.XXXXXX")
 PREVIOUS=$(mktemp "$COMMON/.mosquitto.previous.XXXXXX")
@@ -210,15 +242,20 @@ chmod 600 "$NEXT"
 if [ "$MODE" != local ]; then
   chmod 600 "$NEXT_ACL"
   mv -f "$NEXT_ACL" "$ACL_FILE"
+  NEXT_ACL=""
 else
   rm -f "$NEXT_ACL"
+  NEXT_ACL=""
 fi
 mv -f "$NEXT" "$CANONICAL_CONFIG"
+NEXT=""
 
 if ! restart_and_verify; then
   restore_previous || true
   restart_and_verify || true
   rm -f "$PREVIOUS" "$PREVIOUS_ACL"
+  PREVIOUS=""
+  PREVIOUS_ACL=""
   json_error service_verification_failed "Broker did not remain active; previous configuration was restored"
   exit 1
 fi
@@ -229,6 +266,9 @@ printf 'schema_version=1\nmode=%s\nlocal_port=%s\ngateway_port=%s\nusername=%s\n
   "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$USERNAME" "$REVISION" > "$STATE_NEXT"
 chmod 600 "$STATE_NEXT"
 mv -f "$STATE_NEXT" "$STATE_FILE"
+STATE_NEXT=""
 rm -f "$PREVIOUS" "$PREVIOUS_ACL"
+PREVIOUS=""
+PREVIOUS_ACL=""
 printf '{"schema_version":1,"applied":true,"persisted":true,"restarted":true,"verified":true,"mode":"%s","local_port":%s,"gateway_port":%s,"revision":"%s"}\n' \
   "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$REVISION"

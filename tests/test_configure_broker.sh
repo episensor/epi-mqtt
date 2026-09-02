@@ -72,4 +72,13 @@ set -e
 test "$status" -ne 0
 printf '%s\n' "$invalid" | grep -q '"code":"duplicate_listener_port"'
 
+# A process killed between acquiring and releasing the lock must not block all
+# future broker changes. Only a lock owned by a live PID remains authoritative.
+mkdir "$SNAP_COMMON/.configure-broker.lock"
+printf '999999\n' > "$SNAP_COMMON/.configure-broker.lock/owner"
+recovered=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=0 \
+  sh "$ROOT/snap/local/configure-broker.sh" --mode local --local-port 1884)
+printf '%s\n' "$recovered" | grep -q '"applied":true'
+test ! -e "$SNAP_COMMON/.configure-broker.lock"
+
 echo "broker configuration tests passed"
