@@ -330,7 +330,7 @@ if ! restart_and_verify; then
   exit 1
 fi
 
-REVISION=$(cksum "$CANONICAL_CONFIG" | awk '{print $1 "-" $2}')
+REVISION=$(sha256sum "$CANONICAL_CONFIG" | awk '{print $1}')
 STATE_NEXT=$(mktemp "$COMMON/.broker-config.state.XXXXXX")
 printf 'schema_version=1\nmode=%s\nlocal_port=%s\ngateway_port=%s\nusername=%s\nrevision=%s\n' \
   "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$USERNAME" "$REVISION" > "$STATE_NEXT"
