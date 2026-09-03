@@ -1,0 +1,9 @@
+{
+  "name": "epi-mqtt-snap",
+  "private": true,
+  "version": "2.0.0-rc.5",
+  "scripts": {
+    "test": "sh -c 'for test_script in tests/test_*.sh; do sh \"$test_script\"; done'",
+    "check": "npm test"
+  }
+}

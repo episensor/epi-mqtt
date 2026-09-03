@@ -1,6 +1,52 @@
 Eclipse Mosquitto
 =================
 
+## EpiSensor Snap Diagnostics
+
+The `epi-mqtt` snap exposes Mosquitto client tools as snap apps. Use these
+instead of running binaries directly from `/snap/epi-mqtt/current`, because
+`snap run` sets the library paths and confinement environment correctly.
+
+Subscribe to a local topic:
+
+    snap run epi-mqtt.mosquitto-sub -h localhost -p 1883 -t '#' -v
+
+Publish a local test message:
+
+    snap run epi-mqtt.mosquitto-pub -h localhost -p 1883 -t test/topic -m hello
+
+Short aliases are also available:
+
+    snap run epi-mqtt.sub -h localhost -p 1883 -t '#' -v
+    snap run epi-mqtt.pub -h localhost -p 1883 -t test/topic -m hello
+
+### Configuration authority
+
+The broker has one durable configuration authority:
+`/var/snap/epi-mqtt/common/mosquitto.conf`. On first launch, an older
+content-interface config is imported once when no common config exists;
+afterward, changes to the old path are ignored. The migration source is
+recorded in `/var/snap/epi-mqtt/common/.config-authority-v1`.
+
+Do not write the live file directly. The companion generates the supported
+local, Core mTLS, and Core password configurations, publishes them atomically,
+restarts its own service, requires three consecutive active-service checks,
+and rolls back on failure:
+
+    sudo snap run epi-mqtt.configure --mode local --local-port 1883
+    sudo snap run epi-mqtt.configure --mode core-mtls --local-port 1883 --gateway-port 8883
+    sudo snap run epi-mqtt.configure --mode core-password --username core-user --local-port 1883 --gateway-port 8883
+
+Certificate, CA, ACL, and password files stay in the snap-owned `common` and
+shared `current/certs` paths. Core installers and certificate-renewal hooks
+stage a pair as `current/certs/server-fullchain.pem.pending` and
+`server-privkey.pem.pending`; `epi-mqtt.configure` promotes both files inside
+the same transaction as the generated broker config. A failed service check
+restores the previous config, ACL, certificate, and key and leaves the staged
+pair available for diagnosis or retry. A successful check clears the staging
+files. Password values are never passed through snap configuration or written
+to snapd history.
+
 Mosquitto is an open source implementation of a server for version 5.0, 3.1.1,
 and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and
 the `mosquitto_pub` and `mosquitto_sub` utilities for publishing and

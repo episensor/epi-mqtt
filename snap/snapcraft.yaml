@@ -1,16 +1,30 @@
 name: epi-mqtt
-version: V01.00-RC2
-summary: EpiSensor Eclipse Mosquitto MQTT broker
-description: This is a message broker that supports version 5.0, 3.1.1, and 3.1 of the MQTT
-    protocol.
-    MQTT provides a method of carrying out messaging using a publish/subscribe
-    model. It is lightweight, both in terms of bandwidth usage and ease of
-    implementation. This makes it particularly useful at the edge of the network
-    where a sensor or other simple device may be implemented using an arduino for
-    example.
+version: V02.00-RC5
+summary: EpiSensor MQTT broker for EpiSensor Edge gateways
+description: |
+  Provides MQTT messaging for EpiSensor Edge gateways. Based on
+  Eclipse Mosquitto, enabling inter-snap communication and local
+  MQTT connectivity for industrial IoT data transport.
+icon: snap/gui/episensor.png
 confinement: strict
 grade: stable
-base: core18
+base: core24
+
+platforms:
+  arm64:
+  amd64:
+
+slots:
+  mqtt-config:
+    interface: content
+    content: mqtt-config
+    write:
+      - $SNAP_DATA/config
+  mqtt-certs:
+    interface: content
+    content: mqtt-certs
+    write:
+      - $SNAP_DATA/certs
 
 apps:
   mosquitto:
@@ -18,27 +32,29 @@ apps:
     daemon: simple
     restart-condition: always
     plugs: [home, network, network-bind]
-
   ctrl:
     command: usr/bin/mosquitto_ctrl
     plugs: [home, network]
-
   pub:
     command: usr/bin/mosquitto_pub
     plugs: [home, network]
-
+  mosquitto-pub:
+    command: usr/bin/mosquitto_pub
+    plugs: [home, network]
   rr:
     command: usr/bin/mosquitto_rr
     plugs: [home, network]
-
   sub:
     command: usr/bin/mosquitto_sub
     plugs: [home, network]
-
+  mosquitto-sub:
+    command: usr/bin/mosquitto_sub
+    plugs: [home, network]
   passwd:
     command: usr/bin/mosquitto_passwd
     plugs: [home]
-
+  configure:
+    command: configure-broker.sh
 
 parts:
   script:
@@ -47,30 +63,38 @@ parts:
     prime:
       - default_config.conf
       - launcher.sh
+      - configure-broker.sh
   config:
     plugin: dump
     source: .
     prime:
       - mosquitto.conf
 
-
   mosquitto:
-    after:
-      - lws
-    plugin: make
-    make-parameters: ["prefix=/usr", "WITH_WEBSOCKETS=yes", "WITH_ADNS=yes", "CFLAGS=-Wall -ggdb -O2 -I$SNAPCRAFT_STAGE/include -D_GNU_SOURCE"]
-    source: https://github.com/eclipse/mosquitto
+    plugin: cmake
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DWITH_TESTS=OFF
+      - -DWITH_WEBSOCKETS=OFF
+      - -DWITH_PLUGIN_PERSIST_SQLITE=OFF
+      - -DWITH_PLUGIN_EXAMPLES=OFF
+    source: https://github.com/eclipse-mosquitto/mosquitto
     source-type: git
-
+    source-tag: v2.1.2
     build-packages:
-      - libssl-dev
-      - xsltproc
+      - cmake
       - docbook-xsl
-      - gcc
       - g++
+      - gcc
+      - libcjson-dev
+      - libedit-dev
+      - libssl-dev
+      - make
+      - xsltproc
     stage-packages:
-      - libssl1.0.0
       - ca-certificates
+      - libcjson1
+      - libssl3t64
     prime:
       - usr/sbin/mosquitto
       - usr/bin/mosquitto_ctrl
@@ -78,34 +102,11 @@ parts:
       - usr/bin/mosquitto_rr
       - usr/bin/mosquitto_sub
       - usr/bin/mosquitto_passwd
-      - usr/lib/libmosquitto.so*
-      - usr/lib/mosquitto_dynamic_security.so*
-      - lib/*-linux-gnu/libcrypto.so*
-      - lib/*-linux-gnu/libssl.so*
-      - usr/include/mosquitto.h
-      - usr/include/mosquitto_broker.h
-      - usr/include/mosquitto_plugin.h
-      - usr/include/mqtt_protocol.h
-
-  lws:
-    after:
-      - cjson
-    plugin: cmake
-    configflags: ["-DLWS_IPV6=ON", "-DLWS_WITHOUT_CLIENT=ON", "-DLWS_WITHOUT_EXTENSIONS=ON", "-DLWS_WITH_ZIP_FOPS=OFF", "-DLWS_WITH_ZLIB=OFF", "-DLWS_WITH_SHARED=OFF"]
-    source: https://github.com/warmcat/libwebsockets/archive/v2.4.2.tar.gz
-    source-type: tar
-    stage:
-      - include/libwebsockets.h
-      - include/lws_config.h
-      - lib/libwebsockets.a
-    prime: [-*]
-
-  cjson:
-    plugin: cmake
-    configflags: ["-DCMAKE_C_FLAGS=-fPIC", "-DBUILD_SHARED_AND_STATIC_LIBS=OFF", "-DBUILD_SHARED_LIBS=OFF", "-DCJSON_BUILD_SHARED_LIBS=OFF", "-DCJSON_OVERRIDE_BUILD_SHARED_LIBS=OFF"]
-    source: https://github.com/DaveGamble/cJSON/archive/v1.7.14.tar.gz
-    source-type: tar
-    stage:
-      - include/cjson/cJSON.h
-      - lib/libcjson.a
-    prime: [-*]
+      - usr/lib/*-linux-gnu/libcjson.so*
+      - usr/lib/*-linux-gnu/libcrypto.so*
+      - usr/lib/*-linux-gnu/libmosquitto.so*
+      - usr/lib/*-linux-gnu/libmosquitto_common.so*
+      - usr/lib/*-linux-gnu/libssl.so*
+      - usr/lib/*-linux-gnu/mosquitto_acl_file.so*
+      - usr/lib/*-linux-gnu/mosquitto_dynamic_security.so*
+      - usr/lib/*-linux-gnu/mosquitto_password_file.so*
