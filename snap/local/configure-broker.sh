@@ -199,17 +199,13 @@ if [ "$MODE" != local ]; then
 fi
 
 if [ "$MODE" = core-mtls ]; then
-  for required in \
-    "$SHARED_CERT_DIR/gateway-client-ca.crt"; do
-    [ -f "$required" ] && [ ! -L "$required" ] \
-      || { json_error missing_dependency "Required mTLS file is missing or unsafe"; exit 66; }
-  done
+  required="$SHARED_CERT_DIR/gateway-client-ca.crt"
+  [ -f "$required" ] && [ ! -L "$required" ] \
+    || { json_error missing_dependency "Required mTLS file is missing or unsafe"; exit 66; }
 elif [ "$MODE" = core-password ]; then
-  for required in \
-    "$CONFIG_DIR/passwordfile"; do
-    [ -f "$required" ] && [ ! -L "$required" ] \
-      || { json_error missing_dependency "Required password-auth file is missing or unsafe"; exit 66; }
-  done
+  required="$CONFIG_DIR/passwordfile"
+  [ -f "$required" ] && [ ! -L "$required" ] \
+    || { json_error missing_dependency "Required password-auth file is missing or unsafe"; exit 66; }
 fi
 
 if ! acquire_lock; then
