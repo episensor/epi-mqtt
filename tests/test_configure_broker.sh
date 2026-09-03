@@ -40,6 +40,7 @@ result=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=0 \
   sh "$ROOT/snap/local/configure-broker.sh" --mode core-mtls --local-port 1883 --gateway-port 8883)
 printf '%s\n' "$result" | grep -q '"applied":true'
 printf '%s\n' "$result" | grep -q '"verified":true'
+printf '%s\n' "$result" | grep -Eq '"revision":"[0-9a-f]{64}"'
 grep -q '^per_listener_settings true$' "$SNAP_COMMON/mosquitto.conf"
 grep -q '^cafile /var/snap/epi-mqtt/current/certs/gateway-client-ca.crt$' "$SNAP_COMMON/mosquitto.conf"
 grep -q '^pattern readwrite %u/#$' "$SNAP_COMMON/config/aclfile"
@@ -80,6 +81,7 @@ password_result=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" EPI_MQTT_VERIFY_INTERVAL=
 printf '%s\n' "$password_result" | grep -q '"mode":"core-password"'
 grep -q '^user core-user$' "$SNAP_COMMON/config/aclfile"
 grep -q '^username=core-user$' "$SNAP_COMMON/broker-config.state"
+grep -Eq '^revision=[0-9a-f]{64}$' "$SNAP_COMMON/broker-config.state"
 
 set +e
 invalid=$(EPI_MQTT_SNAPCTL_BIN="$FAKE_SNAPCTL" sh "$ROOT/snap/local/configure-broker.sh" \
