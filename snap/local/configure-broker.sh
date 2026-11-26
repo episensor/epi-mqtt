@@ -8,6 +8,7 @@ MODE=""
 USERNAME=""
 LOCAL_PORT="1883"
 GATEWAY_PORT="8883"
+GATEWAY_TOPIC_POLICY=""
 COMMON="${SNAP_COMMON:?SNAP_COMMON is required}"
 DATA="${SNAP_DATA:?SNAP_DATA is required}"
 SNAP_ID="${SNAP_NAME:-epi-mqtt}"
@@ -40,7 +41,7 @@ USE_STAGED_CERTS=false
 ROLLBACK_REQUIRED=false
 
 usage() {
-  echo "usage: epi-mqtt.configure --mode local|core-mtls|core-password [--local-port PORT] [--gateway-port PORT] [--username USER]" >&2
+  echo "usage: epi-mqtt.configure --mode local|core-mtls|core-password [--local-port PORT] [--gateway-port PORT] [--username USER] [--gateway-topic-policy namespace|directional]" >&2
   exit 64
 }
 
@@ -154,6 +155,8 @@ while [ "$#" -gt 0 ]; do
     --local-port=*) LOCAL_PORT=${1#*=}; shift ;;
     --gateway-port) [ "$#" -ge 2 ] || usage; GATEWAY_PORT="$2"; shift 2 ;;
     --gateway-port=*) GATEWAY_PORT=${1#*=}; shift ;;
+    --gateway-topic-policy) [ "$#" -ge 2 ] && [ -n "$2" ] || usage; GATEWAY_TOPIC_POLICY="$2"; shift 2 ;;
+    --gateway-topic-policy=*) GATEWAY_TOPIC_POLICY=${1#*=}; [ -n "$GATEWAY_TOPIC_POLICY" ] || usage; shift ;;
     --username) [ "$#" -ge 2 ] || usage; USERNAME="$2"; shift 2 ;;
     --username=*) USERNAME=${1#*=}; shift ;;
     -h|--help) usage ;;
@@ -165,6 +168,12 @@ case "$MODE" in
   local|core-mtls|core-password) ;;
   *) usage ;;
 esac
+if [ -n "$GATEWAY_TOPIC_POLICY" ]; then
+  case "$MODE/$GATEWAY_TOPIC_POLICY" in
+    core-mtls/namespace|core-mtls/directional) ;;
+    *) json_error invalid_gateway_topic_policy "Select namespace or directional for the Core mTLS listener"; exit 65 ;;
+  esac
+fi
 valid_port "$LOCAL_PORT" || { json_error invalid_local_port "Local listener port is invalid"; exit 65; }
 valid_port "$GATEWAY_PORT" || { json_error invalid_gateway_port "Gateway listener port is invalid"; exit 65; }
 [ "$MODE" = local ] || [ "$LOCAL_PORT" -ne "$GATEWAY_PORT" ] \
@@ -215,6 +224,25 @@ fi
 printf '%s\n' "$$" > "$LOCK_DIR/owner"
 trap 'cleanup' EXIT HUP INT TERM
 
+# Certificate renewal calls configure without a policy argument. Preserve the
+# committed selection under the same lock that protects the config and ACL.
+if [ "$MODE" = core-mtls ] && [ -z "$GATEWAY_TOPIC_POLICY" ]; then
+  configured=""
+  recorded=""
+  if [ -f "$CANONICAL_CONFIG" ]; then
+    configured=$(sed -n '/^# Gateway topic policy: /p' "$CANONICAL_CONFIG")
+  fi
+  if [ -f "$STATE_FILE" ]; then
+    recorded=$(sed -n '/^gateway_topic_policy=/p' "$STATE_FILE")
+  fi
+  case "$configured/$recorded" in
+    /) GATEWAY_TOPIC_POLICY=namespace ;; # First install or pre-policy config.
+    '# Gateway topic policy: namespace/gateway_topic_policy=namespace') GATEWAY_TOPIC_POLICY=namespace ;;
+    '# Gateway topic policy: directional/gateway_topic_policy=directional') GATEWAY_TOPIC_POLICY=directional ;;
+    *) json_error inconsistent_gateway_topic_policy "Saved Gateway topic policies disagree; select the intended policy explicitly"; exit 66 ;;
+  esac
+fi
+
 NEXT=$(mktemp "$COMMON/.mosquitto.next.XXXXXX")
 PREVIOUS=$(mktemp "$COMMON/.mosquitto.previous.XXXXXX")
 NEXT_ACL=$(mktemp "$CONFIG_DIR/.aclfile.next.XXXXXX")
@@ -264,11 +292,35 @@ allow_anonymous true
 listener $LOCAL_PORT 127.0.0.1
 EOF
 elif [ "$MODE" = core-mtls ]; then
-  cat > "$NEXT_ACL" <<'EOF'
+  if [ "$GATEWAY_TOPIC_POLICY" = directional ]; then
+    cat > "$NEXT_ACL" <<'EOF'
+pattern read %u/#
+pattern read server/broadcast
+pattern write %u/ping
+pattern write %u/data
+pattern write %u/alerts
+pattern write %u/events
+pattern write %u/commands/out
+pattern write %u/rpc/out
+pattern write %u/sync/gateway/complete
+pattern write %u/sync/gateway/complete/gzip
+pattern write %u/sync/gateway/delta
+pattern write %u/sync/gateway/delta/gzip
+pattern write %u/sync/nodes/+/complete
+pattern write %u/sync/nodes/+/complete/gzip
+pattern write %u/sync/nodes/+/delta
+pattern write %u/sync/nodes/+/delta/gzip
+EOF
+  else
+    cat > "$NEXT_ACL" <<'EOF'
 pattern readwrite %u/#
 topic read server/broadcast
 EOF
+  fi
+  acl_digest=$(sha256sum "$NEXT_ACL" | awk '{print $1}')
   cat >> "$NEXT" <<EOF
+# Gateway topic policy: $GATEWAY_TOPIC_POLICY
+# Gateway ACL SHA-256: $acl_digest
 per_listener_settings true
 listener $LOCAL_PORT 127.0.0.1
 allow_anonymous true
@@ -330,6 +382,11 @@ REVISION=$(sha256sum "$CANONICAL_CONFIG" | awk '{print $1}')
 STATE_NEXT=$(mktemp "$COMMON/.broker-config.state.XXXXXX")
 printf 'schema_version=1\nmode=%s\nlocal_port=%s\ngateway_port=%s\nusername=%s\nrevision=%s\n' \
   "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$USERNAME" "$REVISION" > "$STATE_NEXT"
+policy_json=""
+if [ "$MODE" = core-mtls ]; then
+  printf 'gateway_topic_policy=%s\n' "$GATEWAY_TOPIC_POLICY" >> "$STATE_NEXT"
+  policy_json=$(printf ',"gateway_topic_policy":"%s"' "$GATEWAY_TOPIC_POLICY")
+fi
 chmod 600 "$STATE_NEXT"
 mv -f "$STATE_NEXT" "$STATE_FILE"
 STATE_NEXT=""
@@ -342,5 +399,5 @@ PREVIOUS=""
 PREVIOUS_ACL=""
 PREVIOUS_CERT=""
 PREVIOUS_KEY=""
-printf '{"schema_version":1,"applied":true,"persisted":true,"restarted":true,"verified":true,"mode":"%s","local_port":%s,"gateway_port":%s,"revision":"%s"}\n' \
-  "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$REVISION"
+printf '{"schema_version":1,"applied":true,"persisted":true,"restarted":true,"verified":true,"mode":"%s","local_port":%s,"gateway_port":%s,"revision":"%s"%s}\n' \
+  "$MODE" "$LOCAL_PORT" "$GATEWAY_PORT" "$REVISION" "$policy_json"
