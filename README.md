@@ -47,6 +47,31 @@ pair available for diagnosis or retry. A successful check clears the staging
 files. Password values are never passed through snap configuration or written
 to snapd history.
 
+### Gateway topic permissions on a Core mTLS broker
+
+For Gateways using the standard Edge topics with the Gateway serial as the
+first topic level, select the directional policy:
+
+    sudo snap run epi-mqtt.configure --mode core-mtls --gateway-topic-policy directional
+
+Each enrolled Gateway can publish its ping, telemetry, alerts, events, command
+and RPC replies, and complete or delta synchronization messages. It can read
+its own namespace and the shared server broadcast. Core sends commands, RPC
+requests and broadcasts from its loopback listener. Access to that listener
+is trusted. An application that offers operator Release must separately
+verify the operator and the specific trip at each site.
+
+The command restarts the broker. Check that it returns `"verified":true` and
+`"gateway_topic_policy":"directional"`, then confirm that Gateways reconnect,
+telemetry arrives and a read-only Gateway request returns a reply. Certificate
+renewal and subsequent mTLS configuration calls preserve the selected policy.
+The durable receipt is `/var/snap/epi-mqtt/common/broker-config.state`.
+
+Existing installations default to `namespace`, which permits custom topics
+under the Gateway serial. To restore that policy explicitly, use the same
+command with `--gateway-topic-policy namespace`. Password authentication
+does not support per-certificate topic permissions.
+
 Mosquitto is an open source implementation of a server for version 5.0, 3.1.1,
 and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and
 the `mosquitto_pub` and `mosquitto_sub` utilities for publishing and
